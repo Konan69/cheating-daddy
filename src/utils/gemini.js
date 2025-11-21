@@ -5,33 +5,36 @@ const { saveDebugAudio } = require('../audioUtils');
 const { getSystemPrompt } = require('./prompts');
 
 // Conversation tracking variables
-let currentSessionId = null;
-let currentTranscription = '';
-let conversationHistory = [];
-let isInitializingSession = false;
+// let currentSessionId = null;
+// let currentTranscription = '';
+// let conversationHistory = [];
+// let isInitializingSession = false;
 
-function formatSpeakerResults(results) {
-    let text = '';
-    for (const result of results) {
-        if (result.transcript && result.speakerId) {
-            const speakerLabel = result.speakerId === 1 ? 'Interviewer' : 'Candidate';
-            text += `[${speakerLabel}]: ${result.transcript}\n`;
-        }
-    }
-    return text;
-}
+// function formatSpeakerResults(results) {
+//     let text = '';
+//     for (const result of results) {
+//         if (result.transcript && result.speakerId) {
+//             const speakerLabel = result.speakerId === 1 ? 'Interviewer' : 'Candidate';
+//             text += `[${speakerLabel}]: ${result.transcript}\n`;
+//         }
+//     }
+//     return text;
+// }
 
-module.exports.formatSpeakerResults = formatSpeakerResults;
+// module.exports.formatSpeakerResults = formatSpeakerResults;
 
 // Audio capture variables
-let systemAudioProc = null;
-let messageBuffer = '';
+// let systemAudioProc = null;
+let messageBuffer = ''; // Keep this for accumulating response
 
 // Reconnection tracking variables
-let reconnectionAttempts = 0;
-let maxReconnectionAttempts = 3;
-let reconnectionDelay = 2000; // 2 seconds between attempts
-let lastSessionParams = null;
+// let reconnectionAttempts = 0;
+// let maxReconnectionAttempts = 3;
+// let reconnectionDelay = 2000; // 2 seconds between attempts
+// let lastSessionParams = null;
+
+let pendingImage = null; // Store image for the next text request
+let geminiModel = null; // Store the model instance
 
 function sendToRenderer(channel, data) {
     const windows = BrowserWindow.getAllWindows();
@@ -158,6 +161,37 @@ async function getStoredSetting(key, defaultValue) {
     return defaultValue;
 }
 
+async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'interview', language = 'en-US', isReconnection = false) {
+    console.log('Initializing Gemini 3.0 Pro Session (Standard API)...');
+    sendToRenderer('session-initializing', true);
+
+    try {
+        const client = new GoogleGenAI({
+            apiKey: apiKey,
+        });
+
+        // Get enabled tools first to determine Google Search status
+        const enabledTools = await getEnabledTools();
+        // Note: Standard API tools might differ from Live API, but for now we'll pass them if compatible or just ignore for 3.0 preview if not supported yet.
+        // Gemini 3.0 Pro supports Google Search.
+
+        const systemPrompt = getSystemPrompt(profile, customPrompt, false); // Disable search in prompt generation if handled by tool, or keep it.
+
+        // In @google/genai v1+, we use the client directly for generation
+        geminiModel = client;
+
+        sendToRenderer('update-status', 'Ready (Gemini 3.0 Pro)');
+        sendToRenderer('session-initializing', false);
+        return geminiModel;
+    } catch (error) {
+        console.error('Failed to initialize Gemini session:', error);
+        sendToRenderer('session-initializing', false);
+        sendToRenderer('update-status', 'Error: ' + error.message);
+        return null;
+    }
+}
+
+/*
 async function attemptReconnection() {
     if (!lastSessionParams || reconnectionAttempts >= maxReconnectionAttempts) {
         console.log('Max reconnection attempts reached or no session params stored');
@@ -357,7 +391,9 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
         return null;
     }
 }
+*/
 
+/*
 function killExistingSystemAudioDump() {
     return new Promise(resolve => {
         console.log('Checking for existing SystemAudioDump processes...');
@@ -502,7 +538,9 @@ function stopMacOSAudioCapture() {
         systemAudioProc = null;
     }
 }
+*/
 
+/*
 async function sendAudioToGemini(base64Data, geminiSessionRef) {
     if (!geminiSessionRef.current) return;
 
@@ -518,6 +556,7 @@ async function sendAudioToGemini(base64Data, geminiSessionRef) {
         console.error('Error sending audio to Gemini:', error);
     }
 }
+*/
 
 function setupGeminiIpcHandlers(geminiSessionRef) {
     // Store the geminiSessionRef globally for reconnection access
@@ -532,6 +571,18 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         return false;
     });
 
+    ipcMain.handle('send-audio-content', async (event, { data, mimeType }) => {
+        // Disabled for Gemini 3.0 Pro
+        return { success: true };
+    });
+
+    // Handle microphone audio on a separate channel
+    ipcMain.handle('send-mic-audio-content', async (event, { data, mimeType }) => {
+        // Disabled for Gemini 3.0 Pro
+        return { success: true };
+    });
+
+    /*
     ipcMain.handle('send-audio-content', async (event, { data, mimeType }) => {
         if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
         try {
@@ -560,7 +611,110 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: false, error: error.message };
         }
     });
+    */
 
+    ipcMain.handle('send-image-content', async (event, { data, debug }) => {
+        // Store image for the next text request
+        if (!data || typeof data !== 'string') {
+            console.error('Invalid image data received');
+            return { success: false, error: 'Invalid image data' };
+        }
+        
+        console.log('Image buffered for next request');
+        pendingImage = data;
+        return { success: true };
+    });
+
+    ipcMain.handle('send-text-message', async (event, text) => {
+        if (!geminiModel) return { success: false, error: 'No active Gemini model' };
+
+        try {
+            if (!text || typeof text !== 'string' || text.trim().length === 0) {
+                return { success: false, error: 'Invalid text message' };
+            }
+
+            console.log('Sending text message to Gemini 3.0 Pro:', text);
+            sendToRenderer('update-status', 'Thinking...');
+            
+            // Prepare content
+            const parts = [{ text: text.trim() }];
+            if (pendingImage) {
+                console.log('Attaching buffered image to request');
+                parts.push({
+                    inlineData: {
+                        mimeType: 'image/jpeg',
+                        data: pendingImage
+                    }
+                });
+                pendingImage = null; // Clear after use
+            }
+
+            // Reset buffer for new response
+            messageBuffer = '';
+            
+            // Use the client.models.generateContentStream method
+            // Note: systemInstruction needs to be passed here or in config if not supported in initialization
+            const systemPrompt = getSystemPrompt('interview', '', false); 
+            
+            const result = await geminiModel.models.generateContentStream({
+                model: 'gemini-3-pro-preview',
+                contents: [{ role: 'user', parts }],
+                config: {
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                }
+            });
+
+            console.log('Stream result keys:', Object.keys(result));
+            // console.log('Stream result:', result); // Careful with circular structures if any
+
+            // Check if result itself is iterable or has a stream property
+            const streamSource = result.stream || result;
+            
+            for await (const chunk of streamSource) {
+                // console.log('Chunk received:', JSON.stringify(chunk, null, 2));
+                let chunkText = '';
+                
+                try {
+                    if (typeof chunk.text === 'function') {
+                        chunkText = chunk.text();
+                    } else if (chunk.candidates && chunk.candidates[0] && chunk.candidates[0].content && chunk.candidates[0].content.parts) {
+                        chunkText = chunk.candidates[0].content.parts.map(p => p.text).join('');
+                    } else if (chunk.text) {
+                         chunkText = chunk.text;
+                    }
+
+                    // Log safety/finish reason if no text
+                    if (!chunkText && chunk.candidates && chunk.candidates[0]) {
+                        console.log('No text in chunk. Finish reason:', chunk.candidates[0].finishReason);
+                        if (chunk.candidates[0].safetyRatings) {
+                            console.log('Safety ratings:', JSON.stringify(chunk.candidates[0].safetyRatings, null, 2));
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error extracting text from chunk:', e);
+                    console.log('Problematic chunk:', JSON.stringify(chunk, null, 2));
+                }
+
+                if (chunkText) {
+                    messageBuffer += chunkText;
+                    sendToRenderer('update-response', messageBuffer);
+                }
+            }
+            
+            sendToRenderer('update-status', 'Ready');
+            return { success: true };
+        } catch (error) {
+            console.error('Error sending text:', error);
+            console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+            if (error.cause) {
+                console.error('Error cause:', error.cause);
+            }
+            sendToRenderer('update-status', 'Error: ' + error.message);
+            return { success: false, error: error.message };
+        }
+    });
+
+    /*
     ipcMain.handle('send-image-content', async (event, { data, debug }) => {
         if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
 
@@ -605,7 +759,19 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: false, error: error.message };
         }
     });
+    */
 
+    ipcMain.handle('start-macos-audio', async event => {
+        // Disabled
+        return { success: false, error: 'Audio capture disabled for Gemini 3.0 Pro' };
+    });
+
+    ipcMain.handle('stop-macos-audio', async event => {
+        // Disabled
+        return { success: true };
+    });
+
+    /*
     ipcMain.handle('start-macos-audio', async event => {
         if (process.platform !== 'darwin') {
             return {
@@ -632,6 +798,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: false, error: error.message };
         }
     });
+    */
 
     ipcMain.handle('close-session', async event => {
         try {
@@ -695,12 +862,5 @@ module.exports = {
     saveConversationTurn,
     getCurrentSessionData,
     sendReconnectionContext,
-    killExistingSystemAudioDump,
-    startMacOSAudioCapture,
-    convertStereoToMono,
-    stopMacOSAudioCapture,
-    sendAudioToGemini,
     setupGeminiIpcHandlers,
-    attemptReconnection,
-    formatSpeakerResults,
 };

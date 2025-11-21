@@ -190,10 +190,12 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             console.log('Starting macOS capture with SystemAudioDump...');
 
             // Start macOS audio capture
+            /*
             const audioResult = await ipcRenderer.invoke('start-macos-audio');
             if (!audioResult.success) {
                 throw new Error('Failed to start macOS audio capture: ' + audioResult.error);
             }
+            */
 
             // Get screen capture for screenshots
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -207,6 +209,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 
             console.log('macOS screen capture started - audio handled by SystemAudioDump');
 
+            /*
             if (audioMode === 'mic_only' || audioMode === 'both') {
                 let micStream = null;
                 try {
@@ -226,8 +229,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     console.warn('Failed to get microphone access on macOS:', micError);
                 }
             }
+            */
         } else if (isLinux) {
             // Linux - use display media for screen capture and try to get system audio
+            /*
             try {
                 // First try to get system audio via getDisplayMedia (works on newer browsers)
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -262,7 +267,19 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     audio: false,
                 });
             }
+            */
+            
+            // Screen-only capture for Gemini 3.0 Pro
+            mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    frameRate: 1,
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                },
+                audio: false,
+            });
 
+            /*
             // Additionally get microphone input for Linux based on audio mode
             if (audioMode === 'mic_only' || audioMode === 'both') {
                 let micStream = null;
@@ -287,6 +304,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     // Continue without microphone if permission denied
                 }
             }
+            */
 
             console.log('Linux capture started - system audio:', mediaStream.getAudioTracks().length > 0, 'microphone mode:', audioMode);
         } else {
@@ -297,6 +315,8 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
                 },
+                audio: false,
+                /*
                 audio: {
                     sampleRate: SAMPLE_RATE,
                     channelCount: 1,
@@ -304,13 +324,15 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     noiseSuppression: true,
                     autoGainControl: true,
                 },
+                */
             });
 
             console.log('Windows capture started with loopback audio');
 
             // Setup audio processing for Windows loopback audio only
-            setupWindowsLoopbackProcessing();
+            // setupWindowsLoopbackProcessing();
 
+            /*
             if (audioMode === 'mic_only' || audioMode === 'both') {
                 let micStream = null;
                 try {
@@ -330,6 +352,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                     console.warn('Failed to get microphone access on Windows:', micError);
                 }
             }
+            */
         }
 
         console.log('MediaStream obtained:', {
