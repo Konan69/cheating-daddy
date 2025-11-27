@@ -620,7 +620,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: false, error: 'Invalid image data' };
         }
         
-        console.log('Image buffered for next request');
+        
         pendingImage = data;
         return { success: true };
     });
@@ -802,8 +802,6 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
     ipcMain.handle('close-session', async event => {
         try {
-            stopMacOSAudioCapture();
-
             // Clear session params to prevent reconnection when user closes session
             lastSessionParams = null;
 

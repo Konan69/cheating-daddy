@@ -566,23 +566,13 @@ export class AssistantView extends LitElement {
             console.log('Rendered response:', renderedResponse);
             container.innerHTML = renderedResponse;
             const words = container.querySelectorAll('[data-word]');
+            // Immediately show all words to match streaming speed
+            words.forEach(word => word.classList.add('visible'));
+            this._lastAnimatedWordCount = words.length;
+            
+            // Dispatch completion event immediately
             if (this.shouldAnimateResponse) {
-                for (let i = 0; i < this._lastAnimatedWordCount && i < words.length; i++) {
-                    words[i].classList.add('visible');
-                }
-                for (let i = this._lastAnimatedWordCount; i < words.length; i++) {
-                    words[i].classList.remove('visible');
-                    setTimeout(() => {
-                        words[i].classList.add('visible');
-                        if (i === words.length - 1) {
-                            this.dispatchEvent(new CustomEvent('response-animation-complete', { bubbles: true, composed: true }));
-                        }
-                    }, (i - this._lastAnimatedWordCount) * 100);
-                }
-                this._lastAnimatedWordCount = words.length;
-            } else {
-                words.forEach(word => word.classList.add('visible'));
-                this._lastAnimatedWordCount = words.length;
+                 this.dispatchEvent(new CustomEvent('response-animation-complete', { bubbles: true, composed: true }));
             }
         } else {
             console.log('Response container not found');
